@@ -1,0 +1,8 @@
+name: SurvivalTrader
+version: '${project.version}'
+main: ru.yourname.survivaltrader.Main
+api-version: '1.21'
+description: Vanilla shop + auction with troll and YAML persistence.
+authors:
+  - YourName
+folia-supported: false
