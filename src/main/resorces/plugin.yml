@@ -1,7 +1,3 @@
-Скорее всего дело в plugin.yml. Дай заменю его полностью — проверим загрузку и исключим “Unsupported API version”/ошибки обнаружения плагина.
-
-src/main/resources/plugin.yml
-```yaml
 name: SurvivalTrader
 version: '${project.version}'
 main: ru.yourname.survivaltrader.Main
@@ -27,9 +23,3 @@ permissions:
   survivaltrader.ah:
     description: Access to auction.
     default: true
-```
-
-Что сделать дальше:
-- Пересобери JAR, положи в папку plugins, перезапусти сервер (не /reload).
-- В консоли при старте должно быть что-то вроде “Loading SurvivalTrader vX.Y.Z” и “Enabling SurvivalTrader…”.
-- Если всё ещё не появляется в /plugins — скинь строки лога с “Could not load plugin”/“Failed to load” (обычно в начале запуска). Тогда дам следующий файл под фикс.
