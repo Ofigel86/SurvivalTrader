@@ -2,6 +2,7 @@ package ru.yourname.survivaltrader;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -14,6 +15,7 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.jetbrains.annotations.NotNull;
 
@@ -24,6 +26,7 @@ public class ShopManager implements Listener, CommandExecutor {
     private final Main plugin;
     private final Random random = new Random();
 
+    // Данные магазина
     private List<Map<String, Object>> currentItems = new ArrayList<>();
     private Map<String, String> previousBidItems = new HashMap<>();
     private final Map<UUID, Long> lastActionTime = new HashMap<>();
@@ -31,8 +34,24 @@ public class ShopManager implements Listener, CommandExecutor {
     private Map<UUID, Map<String, Integer>> playerPurchases = new HashMap<>();
     private long lastUpdateTime;
 
+    // Навигация (страницы)
+    private final Map<UUID, Integer> shopPage = new HashMap<>();
+    private static final int[] PRODUCT_SLOTS = {
+            10,11,12,13,14,15,
+            19,20,21,22,23,24,
+            28,29,30,31,32,33,
+            37,38,39,40,41,42
+    }; // 24 слота под товары (инвентарь 6x9 = 54)
+    private static final int INV_SIZE = 54;
+
+    // PDC-ключи
+    private NamespacedKey KEY_TYPE;
+    private NamespacedKey KEY_INDEX;
+
     public ShopManager(Main plugin) {
         this.plugin = plugin;
+        this.KEY_TYPE = new NamespacedKey(plugin, "st_type");
+        this.KEY_INDEX = new NamespacedKey(plugin, "st_index");
     }
 
     public void startUpdateTimer() {
@@ -91,6 +110,7 @@ public class ShopManager implements Listener, CommandExecutor {
             return;
         }
 
+        // Копируем список из конфига (чтобы не мутировать его)
         List<Map<String, Object>> pool = new ArrayList<>();
         for (Object o : possible) {
             if (o instanceof Map<?, ?> m) {
@@ -101,6 +121,7 @@ public class ShopManager implements Listener, CommandExecutor {
         }
         Collections.shuffle(pool, random);
 
+        // Белый список валют (только дешёвые ресурсы)
         List<String> allowedBid = plugin.getConfig().getStringList("shop.allowed-bid-items");
         if (allowedBid.isEmpty()) allowedBid = Arrays.asList("DIRT", "COBBLESTONE", "STONE", "SAND", "OAK_LOG");
 
@@ -132,25 +153,31 @@ public class ShopManager implements Listener, CommandExecutor {
             return true;
         }
         if (checkAntiSpam(player, plugin.getConfig().getInt("shop.anti-spam-cooldown", 10))) return true;
-        openShop(player);
+        openShop(player, shopPage.getOrDefault(player.getUniqueId(), 0));
         long left = getShopSecondsLeft();
         player.sendMessage(plugin.getConfig().getString("messages.shop-timeleft", "Обновление магазина через %time%.")
                 .replace("%time%", formatDuration(left)));
         return true;
     }
 
-    private void openShop(Player player) {
-        Inventory inv = Bukkit.createInventory(null, 27, shopTitle());
+    private void openShop(Player player, int page) {
+        int total = currentItems.size();
+        int perPage = PRODUCT_SLOTS.length;
+        int maxPage = Math.max(0, (total - 1) / Math.max(1, perPage));
+        if (page < 0) page = 0;
+        if (page > maxPage) page = maxPage;
+        shopPage.put(player.getUniqueId(), page);
 
-        // Филлер для визуала
-        ItemStack filler = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
-        ItemMeta fm = filler.getItemMeta();
-        if (fm != null) { fm.setDisplayName(" "); filler.setItemMeta(fm); }
-        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, filler);
+        Inventory inv = Bukkit.createInventory(null, INV_SIZE, shopTitle());
+
+        // Рамка и фон
+        fillBorder(inv, Material.BLACK_STAINED_GLASS_PANE, Material.GRAY_STAINED_GLASS_PANE);
 
         // Товары
-        for (int i = 0; i < currentItems.size() && i < inv.getSize(); i++) {
-            Map<String, Object> it = currentItems.get(i);
+        int start = page * perPage;
+        for (int i = 0; i < perPage && (start + i) < total; i++) {
+            int slot = PRODUCT_SLOTS[i];
+            Map<String, Object> it = currentItems.get(start + i);
             try {
                 Material type = Material.valueOf(String.valueOf(it.get("item")));
                 int amount = Integer.parseInt(String.valueOf(it.get("amount")));
@@ -160,33 +187,121 @@ public class ShopManager implements Listener, CommandExecutor {
                 ItemStack stack = new ItemStack(type, amount);
                 ItemMeta meta = stack.getItemMeta();
                 if (meta != null) {
-                    meta.setDisplayName("§b" + type.name().toLowerCase().replace('_', ' '));
+                    meta.setDisplayName("§b" + pretty(type.name()));
                     List<String> lore = new ArrayList<>();
-                    lore.add("§7Цена: §6" + price + " §e" + bid);
+                    lore.add("§7Цена: §6" + price + " §e" + pretty(bid));
                     lore.add("§8— — — — — — — — —");
                     lore.add("§7ЛКМ: купить");
                     meta.setLore(lore);
+                    // тэги
+                    meta.getPersistentDataContainer().set(KEY_TYPE, PersistentDataType.STRING, "product");
+                    meta.getPersistentDataContainer().set(KEY_INDEX, PersistentDataType.INTEGER, start + i);
                     stack.setItemMeta(meta);
                 }
-                inv.setItem(i, stack);
+                inv.setItem(slot, stack);
             } catch (Exception ignored) {}
         }
 
-        // Информация
-        ItemStack info = new ItemStack(Material.PAPER);
-        ItemMeta im = info.getItemMeta();
-        if (im != null) {
-            im.setDisplayName("§aИнформация");
-            List<String> lore = new ArrayList<>();
-            lore.add("§7Валюта магазина: простые ресурсы");
-            lore.add("§7(§eDIRT/COBBLESTONE/STONE/SAND/OAK_LOG§7)");
-            lore.add("§7До обновления: §f" + formatDuration(getShopSecondsLeft()));
-            im.setLore(lore);
-            info.setItemMeta(im);
-        }
-        inv.setItem(inv.getSize() - 1, info);
+        // Информация и навигация
+        int pages = Math.max(1, maxPage + 1);
+        String pageInfo = "§7Страница: §f" + (page + 1) + "§7/§f" + pages;
+
+        // Инфо-кнопка (по центру низа)
+        ItemStack info = makeItem(Material.BOOK, "§aИнформация", Arrays.asList(
+                "§7Валюта: §fпростые ресурсы",
+                "§eDIRT/COBBLESTONE/STONE/SAND/OAK_LOG",
+                "§7До обновления: §f" + formatDuration(getShopSecondsLeft()),
+                pageInfo
+        ));
+        setTag(info, "info", null);
+        inv.setItem(49, info);
+
+        // Назад/вперёд
+        ItemStack prev = makeItem(Material.ARROW, page > 0 ? "§aПредыдущая страница" : "§7Предыдущая страница", Collections.singletonList(" "));
+        setTag(prev, page > 0 ? "prev" : "disabled", null);
+        inv.setItem(45, prev);
+
+        ItemStack next = makeItem(Material.SPECTRAL_ARROW, page < maxPage ? "§aСледующая страница" : "§7Следующая страница", Collections.singletonList(" "));
+        setTag(next, page < maxPage ? "next" : "disabled", null);
+        inv.setItem(53, next);
+
+        // Кнопка обновления ассортимента (визуал)
+        ItemStack refresh = makeItem(Material.CLOCK, "§bОбновление", Arrays.asList(
+                "§7Авто-обновление каждые §f" + plugin.getConfig().getLong("shop.update-interval", 3600) + "§7 сек.",
+                "§7До обновления: §f" + formatDuration(getShopSecondsLeft())
+        ));
+        setTag(refresh, "refresh", null);
+        inv.setItem(48, refresh);
 
         player.openInventory(inv);
+    }
+
+    private void fillBorder(Inventory inv, Material border, Material background) {
+        ItemStack borderPane = makePane(border);
+        ItemStack backPane = makePane(background);
+
+        // сначала фон
+        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, backPane);
+
+        // верх/низ
+        for (int c = 0; c < 9; c++) {
+            inv.setItem(c, borderPane);
+            inv.setItem(45 + c, borderPane);
+        }
+        // бока
+        for (int r = 0; r < 6; r++) {
+            inv.setItem(r * 9, borderPane);
+            inv.setItem(r * 9 + 8, borderPane);
+        }
+    }
+
+    private ItemStack makePane(Material mat) {
+        ItemStack pane = new ItemStack(mat);
+        ItemMeta m = pane.getItemMeta();
+        if (m != null) {
+            m.setDisplayName(" ");
+            pane.setItemMeta(m);
+        }
+        return pane;
+    }
+
+    private ItemStack makeItem(Material mat, String name, List<String> lore) {
+        ItemStack item = new ItemStack(mat);
+        ItemMeta im = item.getItemMeta();
+        if (im != null) {
+            if (name != null) im.setDisplayName(name);
+            if (lore != null) im.setLore(lore);
+            item.setItemMeta(im);
+        }
+        return item;
+    }
+
+    private void setTag(ItemStack stack, String type, Integer index) {
+        ItemMeta im = stack.getItemMeta();
+        if (im == null) return;
+        im.getPersistentDataContainer().set(KEY_TYPE, PersistentDataType.STRING, type);
+        if (index != null) im.getPersistentDataContainer().set(KEY_INDEX, PersistentDataType.INTEGER, index);
+        stack.setItemMeta(im);
+    }
+
+    private String getTagType(ItemStack stack) {
+        if (stack == null) return null;
+        ItemMeta im = stack.getItemMeta();
+        if (im == null) return null;
+        return im.getPersistentDataContainer().get(KEY_TYPE, PersistentDataType.STRING);
+    }
+
+    private Integer getTagIndex(ItemStack stack) {
+        if (stack == null) return null;
+        ItemMeta im = stack.getItemMeta();
+        if (im == null) return null;
+        return im.getPersistentDataContainer().get(KEY_INDEX, PersistentDataType.INTEGER);
+    }
+
+    private String pretty(String key) {
+        String s = key.toLowerCase().replace('_', ' ');
+        if (s.isEmpty()) return key;
+        return Character.toUpperCase(s.charAt(0)) + (s.length() > 1 ? s.substring(1) : "");
     }
 
     @EventHandler
@@ -200,19 +315,32 @@ public class ShopManager implements Listener, CommandExecutor {
         ItemStack clicked = e.getCurrentItem();
         if (clicked == null || clicked.getType() == Material.AIR) return;
 
-        // Клики по филлерам/инфо игнорируем
-        if (clicked.getType().toString().endsWith("_STAINED_GLASS_PANE") || clicked.getType() == Material.PAPER) return;
+        String type = getTagType(clicked);
+        if (type == null) return;
 
         if (checkAntiSpam(player, plugin.getConfig().getInt("shop.anti-spam-cooldown", 10))) return;
 
-        int slot = e.getRawSlot();
-        if (slot < 0 || slot >= e.getView().getTopInventory().getSize()) return;
-        if (slot >= currentItems.size()) return;
+        switch (type) {
+            case "product" -> {
+                Integer idx = getTagIndex(clicked);
+                if (idx == null) return;
+                if (idx < 0 || idx >= currentItems.size()) return;
+                buyProduct(player, currentItems.get(idx));
+            }
+            case "prev" -> openShop(player, shopPage.getOrDefault(player.getUniqueId(), 0) - 1);
+            case "next" -> openShop(player, shopPage.getOrDefault(player.getUniqueId(), 0) + 1);
+            case "refresh" -> {
+                // просто перерисуем страницу (инфо о времени)
+                openShop(player, shopPage.getOrDefault(player.getUniqueId(), 0));
+            }
+            default -> {}
+        }
+    }
 
-        Map<String, Object> it = currentItems.get(slot);
+    private void buyProduct(Player player, Map<String, Object> it) {
         String itemName = String.valueOf(it.get("item"));
         int amount = Integer.parseInt(String.valueOf(it.get("amount")));
-        int basePrice = Integer.parseInt(String.valueOf(it.get("price")));
+        int price = Integer.parseInt(String.valueOf(it.get("price")));
         String bidStr = String.valueOf(it.get("bid-item"));
 
         Material type;
@@ -224,8 +352,6 @@ public class ShopManager implements Listener, CommandExecutor {
             player.sendMessage("§cОшибка товара.");
             return;
         }
-
-        int price = basePrice; // без скидок
 
         int globalCount = globalPurchases.getOrDefault(itemName, 0);
         if (globalCount >= plugin.getConfig().getInt("shop.global-max-purchases-per-item", 999)) {
@@ -249,6 +375,7 @@ public class ShopManager implements Listener, CommandExecutor {
         player.getInventory().removeItem(new ItemStack(bidType, price));
         HashMap<Integer, ItemStack> overflow = player.getInventory().addItem(new ItemStack(type, amount));
         if (!overflow.isEmpty()) {
+            // Вернём валюту, если не поместилось
             player.getInventory().addItem(new ItemStack(bidType, price));
             player.sendMessage(plugin.getConfig().getString("messages.inventory-full", "Недостаточно места в инвентаре!"));
             return;
@@ -282,7 +409,7 @@ public class ShopManager implements Listener, CommandExecutor {
         long h = seconds / 3600; seconds %= 3600;
         long m = seconds / 60; long s = seconds % 60;
         if (h > 0) return String.format("%dч %02dм %02dс", h, m, s);
-        if (m > 0) return String.format("%dм %02dс", m, s);
+        if (m > 0) return String.format("%dм %02дс", m, s).replace("д", "m");
         return s + "с";
     }
 
