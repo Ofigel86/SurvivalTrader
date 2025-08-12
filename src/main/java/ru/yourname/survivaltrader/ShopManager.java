@@ -2,7 +2,6 @@ package ru.yourname.survivaltrader;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.Statistic;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -102,14 +101,14 @@ public class ShopManager implements Listener, CommandExecutor {
         }
         Collections.shuffle(pool, random);
 
-        List<String> bidPool = plugin.getConfig().getStringList("possible-bid-items");
-        if (bidPool.isEmpty()) bidPool = Arrays.asList("DIRT", "COBBLESTONE", "OAK_LOG");
+        List<String> allowedBid = plugin.getConfig().getStringList("shop.allowed-bid-items");
+        if (allowedBid.isEmpty()) allowedBid = Arrays.asList("DIRT", "COBBLESTONE", "STONE", "SAND", "OAK_LOG");
 
         int count = Math.max(1, plugin.getConfig().getInt("shop.items-per-update", 3));
         for (int i = 0; i < count && i < pool.size(); i++) {
             Map<String, Object> item = pool.get(i);
             String itemName = String.valueOf(item.get("item"));
-            String chosen = chooseBidItem(itemName, bidPool);
+            String chosen = chooseBidItem(itemName, allowedBid);
             item.put("bid-item", chosen);
             currentItems.add(item);
             previousBidItems.put(itemName, chosen);
@@ -142,6 +141,14 @@ public class ShopManager implements Listener, CommandExecutor {
 
     private void openShop(Player player) {
         Inventory inv = Bukkit.createInventory(null, 27, shopTitle());
+
+        // Филлер для визуала
+        ItemStack filler = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
+        ItemMeta fm = filler.getItemMeta();
+        if (fm != null) { fm.setDisplayName(" "); filler.setItemMeta(fm); }
+        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, filler);
+
+        // Товары
         for (int i = 0; i < currentItems.size() && i < inv.getSize(); i++) {
             Map<String, Object> it = currentItems.get(i);
             try {
@@ -153,15 +160,32 @@ public class ShopManager implements Listener, CommandExecutor {
                 ItemStack stack = new ItemStack(type, amount);
                 ItemMeta meta = stack.getItemMeta();
                 if (meta != null) {
+                    meta.setDisplayName("§b" + type.name().toLowerCase().replace('_', ' '));
                     List<String> lore = new ArrayList<>();
-                    lore.add("§7Цена: " + price + " " + bid);
-                    lore.add("§7Клик для покупки");
+                    lore.add("§7Цена: §6" + price + " §e" + bid);
+                    lore.add("§8— — — — — — — — —");
+                    lore.add("§7ЛКМ: купить");
                     meta.setLore(lore);
                     stack.setItemMeta(meta);
                 }
                 inv.setItem(i, stack);
             } catch (Exception ignored) {}
         }
+
+        // Информация
+        ItemStack info = new ItemStack(Material.PAPER);
+        ItemMeta im = info.getItemMeta();
+        if (im != null) {
+            im.setDisplayName("§aИнформация");
+            List<String> lore = new ArrayList<>();
+            lore.add("§7Валюта магазина: простые ресурсы");
+            lore.add("§7(§eDIRT/COBBLESTONE/STONE/SAND/OAK_LOG§7)");
+            lore.add("§7До обновления: §f" + formatDuration(getShopSecondsLeft()));
+            im.setLore(lore);
+            info.setItemMeta(im);
+        }
+        inv.setItem(inv.getSize() - 1, info);
+
         player.openInventory(inv);
     }
 
@@ -169,13 +193,16 @@ public class ShopManager implements Listener, CommandExecutor {
     public void onShopClick(InventoryClickEvent e) {
         if (e.getView() == null || e.getView().getTitle() == null) return;
         if (!shopTitle().equals(e.getView().getTitle())) return;
-        if (e.getClickedInventory() == null || !e.getClickedInventory().equals(e.getView().getTopInventory())) {
-            e.setCancelled(true);
-            return;
-        }
-        e.setCancelled(true);
 
+        e.setCancelled(true);
         if (!(e.getWhoClicked() instanceof Player player)) return;
+
+        ItemStack clicked = e.getCurrentItem();
+        if (clicked == null || clicked.getType() == Material.AIR) return;
+
+        // Клики по филлерам/инфо игнорируем
+        if (clicked.getType().toString().endsWith("_STAINED_GLASS_PANE") || clicked.getType() == Material.PAPER) return;
+
         if (checkAntiSpam(player, plugin.getConfig().getInt("shop.anti-spam-cooldown", 10))) return;
 
         int slot = e.getRawSlot();
@@ -198,13 +225,7 @@ public class ShopManager implements Listener, CommandExecutor {
             return;
         }
 
-        int price = basePrice;
-        if (isNewbie(player)) {
-            int discount = plugin.getConfig().getInt("shop.newbie-discount", 0);
-            price = (int) Math.max(1, Math.round(basePrice * (1 - discount / 100.0)));
-            player.sendMessage(plugin.getConfig().getString("messages.newbie-bonus", "Новичок: скидка %discount%!")
-                    .replace("%discount%", String.valueOf(discount)));
-        }
+        int price = basePrice; // без скидок
 
         int globalCount = globalPurchases.getOrDefault(itemName, 0);
         if (globalCount >= plugin.getConfig().getInt("shop.global-max-purchases-per-item", 999)) {
@@ -248,14 +269,6 @@ public class ShopManager implements Listener, CommandExecutor {
     public void onShopDrag(InventoryDragEvent e) {
         if (e.getView() == null || e.getView().getTitle() == null) return;
         if (shopTitle().equals(e.getView().getTitle())) e.setCancelled(true);
-    }
-
-    private boolean isNewbie(Player player) {
-        long playTicks = player.getStatistic(Statistic.PLAY_ONE_MINUTE);
-        long seconds = playTicks / 20L;
-        int level = player.getLevel();
-        return seconds < plugin.getConfig().getLong("shop.newbie-time", 3600)
-                || level < plugin.getConfig().getInt("shop.newbie-level", 10);
     }
 
     private long getShopSecondsLeft() {
