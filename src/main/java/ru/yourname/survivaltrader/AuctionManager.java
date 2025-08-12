@@ -85,45 +85,94 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         deposits.clear();
         playerBidCounts.clear();
 
-        int online = Bukkit.getOnlinePlayers().size();
-        int opChance = getOpChance(online);
+        int chance = Math.max(0, Math.min(100, plugin.getConfig().getInt("auction.troll-chance", 0)));
+        isTroll = random.nextInt(100) < chance;
 
-        isTroll = random.nextInt(100) < plugin.getConfig().getInt("auction.troll-chance", 0);
+        currentBidItem = Material.matchMaterial(plugin.getConfig().getString("auction.bid-item", "DIAMOND"));
+        if (currentBidItem == null) currentBidItem = Material.DIAMOND;
 
-        List<String> possibleBid = plugin.getConfig().getStringList("possible-bid-items");
-        if (possibleBid.isEmpty()) possibleBid = Arrays.asList("DIRT", "COBBLESTONE", "OAK_LOG");
         currentMinBid = Math.max(1, plugin.getConfig().getInt("auction.min-bid-base", 1));
 
         if (isTroll) {
             currentLot = createTrollLot();
-            currentBidItem = Material.valueOf(plugin.getConfig().getString("auction.fake-bid-item", "DIRT"));
             Bukkit.broadcastMessage(plugin.getConfig().getString("messages.new-auction-troll", "Новый аукцион (тролль)")
-                    .replace("%fakebiditem%", currentBidItem.name())
+                    .replace("%fakebiditem%", plugin.getConfig().getString("auction.fake-bid-item", "DIRT"))
                     .replace("%minbid%", String.valueOf(currentMinBid)));
         } else {
-            String lotName;
-            if (random.nextInt(100) < opChance) {
-                List<String> possibleLots = plugin.getConfig().getStringList("auction.possible-lots");
-                if (possibleLots.isEmpty()) possibleLots = Collections.singletonList("IRON_SWORD");
-                lotName = possibleLots.get(random.nextInt(possibleLots.size()));
-            } else {
-                lotName = "IRON_SWORD";
+            // Всегда OP: либо из списка op-lots, либо сгенерированный алмазный шмот
+            List<String> opLots = plugin.getConfig().getStringList("auction.op-lots");
+            if (opLots.isEmpty()) {
+                opLots = Arrays.asList("TOTEM_OF_UNDYING","ELYTRA","NETHERITE_SWORD","BEACON","ENCHANTED_GOLDEN_APPLE","ENCHANTED_BOOK");
             }
-            currentLot = new ItemStack(Material.valueOf(lotName));
-            currentBidItem = Material.valueOf(possibleBid.get(random.nextInt(possibleBid.size())));
+
+            boolean genDiamond = plugin.getConfig().getBoolean("auction.generate-diamond-gear", true);
+            if (genDiamond && random.nextBoolean()) {
+                currentLot = generateDiamondGear();
+            } else {
+                String lotName = opLots.get(random.nextInt(opLots.size()));
+                currentLot = new ItemStack(Material.valueOf(lotName));
+                // Лёгкий визуал для OP-предметов (если возможно)
+                ItemMeta meta = currentLot.getItemMeta();
+                if (meta != null) {
+                    meta.setDisplayName("§b" + lotName.toLowerCase().replace('_', ' ') + " §6[OP]");
+                    currentLot.setItemMeta(meta);
+                }
+            }
+
+            String lotNameShown = (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
+                    ? currentLot.getItemMeta().getDisplayName()
+                    : currentLot.getType().name();
+
             Bukkit.broadcastMessage(plugin.getConfig().getString("messages.new-auction", "Новый аукцион!")
-                    .replace("%lot%", lotName)
+                    .replace("%lot%", lotNameShown)
                     .replace("%biditem%", currentBidItem.name())
                     .replace("%minbid%", String.valueOf(currentMinBid)));
         }
     }
 
-    private int getOpChance(int online) {
-        if (online < plugin.getConfig().getInt("auction.low-online-threshold", 5))
-            return plugin.getConfig().getInt("auction.op-lot-chance-low", 10);
-        if (online > plugin.getConfig().getInt("auction.high-online-threshold", 10))
-            return plugin.getConfig().getInt("auction.op-lot-chance-high", 50);
-        return 30;
+    private ItemStack generateDiamondGear() {
+        // Случайный алмазный предмет с зачарованиями
+        Material[] pool = new Material[] {
+                Material.DIAMOND_SWORD, Material.DIAMOND_AXE, Material.DIAMOND_PICKAXE,
+                Material.DIAMOND_SHOVEL, Material.DIAMOND_HELMET, Material.DIAMOND_CHESTPLATE,
+                Material.DIAMOND_LEGGINGS, Material.DIAMOND_BOOTS, Material.DIAMOND_HOE, Material.BOW, Material.CROSSBOW
+        };
+        Material type = pool[random.nextInt(pool.length)];
+        ItemStack it = new ItemStack(type, 1);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName("§b" + type.name().toLowerCase().replace('_', ' ') + " §6[OP]");
+            List<String> lore = new ArrayList<>();
+            lore.add("§7Алмазный предмет с усиленными чарами");
+            meta.setLore(lore);
+            it.setItemMeta(meta);
+        }
+        // подбираем чары для типа
+        if (type == Material.DIAMOND_SWORD) {
+            it.addUnsafeEnchantment(Enchantment.SHARPNESS, 5);
+            it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
+            it.addUnsafeEnchantment(Enchantment.MENDING, 1);
+        } else if (type == Material.BOW) {
+            it.addUnsafeEnchantment(Enchantment.POWER, 5);
+            it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
+            it.addUnsafeEnchantment(Enchantment.MENDING, 1);
+        } else if (type == Material.CROSSBOW) {
+            it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
+            it.addUnsafeEnchantment(Enchantment.MENDING, 1);
+        } else if (type.toString().contains("PICKAXE") || type.toString().contains("AXE") || type.toString().contains("SHOVEL") || type.toString().contains("HOE")) {
+            it.addUnsafeEnchantment(Enchantment.EFFICIENCY, 5);
+            it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
+            it.addUnsafeEnchantment(Enchantment.MENDING, 1);
+            if (type != Material.DIAMOND_AXE) {
+                it.addUnsafeEnchantment(Enchantment.FORTUNE, 3);
+            }
+        } else {
+            // броня
+            it.addUnsafeEnchantment(Enchantment.PROTECTION, 4);
+            it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
+            it.addUnsafeEnchantment(Enchantment.MENDING, 1);
+        }
+        return it;
     }
 
     private ItemStack createTrollLot() {
@@ -141,6 +190,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         for (ItemStack piece : armor) {
             ItemMeta pm = piece.getItemMeta();
             if (pm != null) {
+                pm.setDisplayName("§6Сет Бога");
                 pm.addEnchant(Enchantment.PROTECTION, 4, true);
                 pm.addEnchant(Enchantment.UNBREAKING, 3, true);
                 piece.setItemMeta(pm);
@@ -211,10 +261,10 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                 im.setDisplayName("§aИнформация");
                 List<String> lore = new ArrayList<>();
                 lore.add("§7Лот: Шалкер с сетом");
-                lore.add("§7Валюта: " + (currentBidItem == null ? "—" : currentBidItem.name()));
-                lore.add("§7Мин. ставка: " + currentMinBid);
-                lore.add("§7Текущий максимум: " + getMaxEffectiveBid());
-                lore.add("§7До конца: " + formatDuration(getAuctionSecondsLeft()));
+                lore.add("§7Валюта: §b" + currentBidItem.name());
+                lore.add("§7Мин. ставка: §6" + currentMinBid);
+                lore.add("§7Текущий максимум: §f" + getMaxEffectiveBid());
+                lore.add("§7До конца: §f" + formatDuration(getAuctionSecondsLeft()));
                 im.setLore(lore);
                 info.setItemMeta(im);
             }
@@ -228,11 +278,11 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             if (im != null) {
                 im.setDisplayName("§aИнформация");
                 List<String> lore = new ArrayList<>();
-                lore.add("§7Лот: " + currentLot.getType().name());
-                lore.add("§7Валюта: " + (currentBidItem == null ? "—" : currentBidItem.name()));
-                lore.add("§7Мин. ставка: " + currentMinBid);
-                lore.add("§7Текущий максимум: " + getMaxEffectiveBid());
-                lore.add("§7До конца: " + formatDuration(getAuctionSecondsLeft()));
+                lore.add("§7Лот: §b" + currentLot.getType().name());
+                lore.add("§7Валюта: §b" + currentBidItem.name());
+                lore.add("§7Мин. ставка: §6" + currentMinBid);
+                lore.add("§7Текущий максимум: §f" + getMaxEffectiveBid());
+                lore.add("§7До конца: §f" + formatDuration(getAuctionSecondsLeft()));
                 im.setLore(lore);
                 info.setItemMeta(im);
             }
@@ -275,10 +325,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             return;
         }
 
-        boolean bonusNow = (count == 0) && isLowResources(player);
-        int bonus = bonusNow ? plugin.getConfig().getInt("auction.starting-bonus", 0) : 0;
-
-        int newEffective = amount + Math.max(0, bonus);
+        int newEffective = amount; // бонус новичка на аукционе оставлен как было — при необходимости можно выключить
         int currentMax = getMaxEffectiveBid();
 
         if (newEffective <= currentMax || newEffective < currentMinBid) {
@@ -302,21 +349,8 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         effectiveBids.put(player.getUniqueId(), newEffective);
         playerBidCounts.put(player.getUniqueId(), count + 1);
 
-        if (bonusNow && bonus > 0) {
-            player.sendMessage(plugin.getConfig().getString("messages.starting-bonus-applied", "Бонус: +%bonus% к ставке!")
-                    .replace("%bonus%", String.valueOf(bonus)));
-        }
         player.sendMessage(plugin.getConfig().getString("messages.bid-success", "Ставка принята!")
                 .replace("%effective%", String.valueOf(newEffective)));
-    }
-
-    private boolean isLowResources(Player player) {
-        int threshold = plugin.getConfig().getInt("auction.newbie-resource-threshold", 100);
-        int count = 0;
-        for (ItemStack item : player.getInventory().getContents()) {
-            if (item != null && item.getType() == currentBidItem) count += item.getAmount();
-        }
-        return count < threshold;
     }
 
     private void showStatus(Player player) {
@@ -324,8 +358,10 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             player.sendMessage("§eСейчас аукцион не активен.");
             return;
         }
-        String lot = isTroll ? "Шалкер с сетом бога" : currentLot.getType().name();
-        player.sendMessage("§aЛот: " + lot);
+        String lotShown = (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
+                ? currentLot.getItemMeta().getDisplayName()
+                : currentLot.getType().name();
+        player.sendMessage("§aЛот: " + lotShown);
         player.sendMessage("§aСтавки в: " + currentBidItem.name() + " (мин. " + currentMinBid + ", макс: " + getMaxEffectiveBid() + ")");
         player.sendMessage(plugin.getConfig().getString("messages.auction-timeleft", "До конца аукциона: %time%.")
                 .replace("%time%", formatDuration(getAuctionSecondsLeft())));
@@ -386,7 +422,10 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         }
 
         if (winner != null) {
-            String lotName = currentLot.getType().name();
+            String lotName = (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
+                    ? currentLot.getItemMeta().getDisplayName()
+                    : currentLot.getType().name();
+
             Player w = Bukkit.getPlayer(winner);
             if (w != null) {
                 HashMap<Integer, ItemStack> overflow = w.getInventory().addItem(currentLot.clone());
@@ -457,7 +496,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
     public void onJoin(PlayerJoinEvent e) {
         UUID id = e.getPlayer().getUniqueId();
 
-        // Награды победителя
+        // Награды победителя (списком)
         List<ItemStack> list = pendingRewards.get(id);
         if (list != null && !list.isEmpty()) {
             Iterator<ItemStack> it = list.iterator();
@@ -478,7 +517,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             }
         }
 
-        // Возвраты проигравшим — по валютам
+        // Возвраты проигравшим
         Map<String, Integer> returns = pendingReturns.get(id);
         if (returns != null && !returns.isEmpty()) {
             Iterator<Map.Entry<String, Integer>> it = returns.entrySet().iterator();
