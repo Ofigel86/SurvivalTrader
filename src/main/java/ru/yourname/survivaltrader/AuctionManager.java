@@ -99,7 +99,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                     .replace("%fakebiditem%", plugin.getConfig().getString("auction.fake-bid-item", "DIRT"))
                     .replace("%minbid%", String.valueOf(currentMinBid)));
         } else {
-            // Всегда OP: либо из списка op-lots, либо сгенерированный алмазный шмот
+            // Всегда OP: либо из списка op-lots, либо генерация алмазного шмота с чарами
             List<String> opLots = plugin.getConfig().getStringList("auction.op-lots");
             if (opLots.isEmpty()) {
                 opLots = Arrays.asList("TOTEM_OF_UNDYING","ELYTRA","NETHERITE_SWORD","BEACON","ENCHANTED_GOLDEN_APPLE","ENCHANTED_BOOK");
@@ -111,7 +111,6 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             } else {
                 String lotName = opLots.get(random.nextInt(opLots.size()));
                 currentLot = new ItemStack(Material.valueOf(lotName));
-                // Лёгкий визуал для OP-предметов (если возможно)
                 ItemMeta meta = currentLot.getItemMeta();
                 if (meta != null) {
                     meta.setDisplayName("§b" + lotName.toLowerCase().replace('_', ' ') + " §6[OP]");
@@ -131,7 +130,6 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
     }
 
     private ItemStack generateDiamondGear() {
-        // Случайный алмазный предмет с зачарованиями
         Material[] pool = new Material[] {
                 Material.DIAMOND_SWORD, Material.DIAMOND_AXE, Material.DIAMOND_PICKAXE,
                 Material.DIAMOND_SHOVEL, Material.DIAMOND_HELMET, Material.DIAMOND_CHESTPLATE,
@@ -147,7 +145,6 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             meta.setLore(lore);
             it.setItemMeta(meta);
         }
-        // подбираем чары для типа
         if (type == Material.DIAMOND_SWORD) {
             it.addUnsafeEnchantment(Enchantment.SHARPNESS, 5);
             it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
@@ -163,11 +160,8 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             it.addUnsafeEnchantment(Enchantment.EFFICIENCY, 5);
             it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
             it.addUnsafeEnchantment(Enchantment.MENDING, 1);
-            if (type != Material.DIAMOND_AXE) {
-                it.addUnsafeEnchantment(Enchantment.FORTUNE, 3);
-            }
+            if (type != Material.DIAMOND_AXE) it.addUnsafeEnchantment(Enchantment.FORTUNE, 3);
         } else {
-            // броня
             it.addUnsafeEnchantment(Enchantment.PROTECTION, 4);
             it.addUnsafeEnchantment(Enchantment.UNBREAKING, 3);
             it.addUnsafeEnchantment(Enchantment.MENDING, 1);
@@ -251,67 +245,90 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                 return;
             }
             Inventory inv = Bukkit.createInventory(null, 54, title);
+            fillBorder(inv, Material.BLACK_STAINED_GLASS_PANE, Material.GRAY_STAINED_GLASS_PANE);
+
             ItemStack[] contents = box.getInventory().getContents();
-            for (int i = 0; i < contents.length && i < inv.getSize(); i++) {
-                if (contents[i] != null) inv.setItem(i, contents[i].clone());
+            int idx = 0;
+            for (int r = 1; r <= 4; r++) { // внутренние 4 ряда (без рамки)
+                for (int c = 1; c <= 7; c++) {
+                    int slot = r * 9 + c;
+                    if (idx < contents.length && contents[idx] != null) {
+                        inv.setItem(slot, contents[idx].clone());
+                    }
+                    idx++;
+                }
             }
-            ItemStack info = new ItemStack(Material.PAPER);
-            ItemMeta im = info.getItemMeta();
-            if (im != null) {
-                im.setDisplayName("§aИнформация");
-                List<String> lore = new ArrayList<>();
-                lore.add("§7Лот: Шалкер с сетом");
-                lore.add("§7Валюта: §b" + currentBidItem.name());
-                lore.add("§7Мин. ставка: §6" + currentMinBid);
-                lore.add("§7Текущий максимум: §f" + getMaxEffectiveBid());
-                lore.add("§7До конца: §f" + formatDuration(getAuctionSecondsLeft()));
-                im.setLore(lore);
-                info.setItemMeta(im);
-            }
-            inv.setItem(inv.getSize() - 1, info);
+
+            ItemStack info = makeItem(Material.PAPER, "§aИнформация", Arrays.asList(
+                    "§7Лот: §bШалкер с сетом",
+                    "§7Валюта: §b" + currentBidItem.name(),
+                    "§7Мин. ставка: §6" + currentMinBid,
+                    "§7Текущий максимум: §f" + getMaxEffectiveBid(),
+                    "§7До конца: §f" + formatDuration(getAuctionSecondsLeft())
+            ));
+            inv.setItem(49, info);
             player.openInventory(inv);
         } else {
             Inventory inv = Bukkit.createInventory(null, 27, title);
+            fillBorder(inv, Material.BLACK_STAINED_GLASS_PANE, Material.GRAY_STAINED_GLASS_PANE);
+
             inv.setItem(13, currentLot.clone());
-            ItemStack info = new ItemStack(Material.PAPER);
-            ItemMeta im = info.getItemMeta();
-            if (im != null) {
-                im.setDisplayName("§aИнформация");
-                List<String> lore = new ArrayList<>();
-                lore.add("§7Лот: §b" + currentLot.getType().name());
-                lore.add("§7Валюта: §b" + currentBidItem.name());
-                lore.add("§7Мин. ставка: §6" + currentMinBid);
-                lore.add("§7Текущий максимум: §f" + getMaxEffectiveBid());
-                lore.add("§7До конца: §f" + formatDuration(getAuctionSecondsLeft()));
-                im.setLore(lore);
-                info.setItemMeta(im);
-            }
+            ItemStack info = makeItem(Material.PAPER, "§aИнформация", Arrays.asList(
+                    "§7Лот: §b" + (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName()
+                            ? currentLot.getItemMeta().getDisplayName() : currentLot.getType().name()),
+                    "§7Валюта: §b" + currentBidItem.name(),
+                    "§7Мин. ставка: §6" + currentMinBid,
+                    "§7Текущий максимум: §f" + getMaxEffectiveBid(),
+                    "§7До конца: §f" + formatDuration(getAuctionSecondsLeft())
+            ));
             inv.setItem(22, info);
             player.openInventory(inv);
         }
     }
 
-    @EventHandler
-    public void onPreviewClick(InventoryClickEvent e) {
-        String title = plugin.getConfig().getString("gui.auction-preview-title", "Auction Preview");
-        if (e.getView() != null && title.equals(e.getView().getTitle())) e.setCancelled(true);
+    private void fillBorder(Inventory inv, Material border, Material background) {
+        ItemStack borderPane = makePane(border);
+        ItemStack backPane = makePane(background);
+
+        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, backPane);
+
+        int rows = inv.getSize() / 9;
+        // top/bottom
+        for (int c = 0; c < 9; c++) {
+            inv.setItem(c, borderPane);
+            inv.setItem((rows - 1) * 9 + c, borderPane);
+        }
+        // sides
+        for (int r = 0; r < rows; r++) {
+            inv.setItem(r * 9, borderPane);
+            inv.setItem(r * 9 + 8, borderPane);
+        }
     }
 
-    @EventHandler
-    public void onPreviewDrag(InventoryDragEvent e) {
-        String title = plugin.getConfig().getString("gui.auction-preview-title", "Auction Preview");
-        if (e.getView() != null && title.equals(e.getView().getTitle())) e.setCancelled(true);
+    private ItemStack makePane(Material mat) {
+        ItemStack pane = new ItemStack(mat);
+        ItemMeta m = pane.getItemMeta();
+        if (m != null) {
+            m.setDisplayName(" ");
+            pane.setItemMeta(m);
+        }
+        return pane;
+    }
+
+    private ItemStack makeItem(Material mat, String name, List<String> lore) {
+        ItemStack item = new ItemStack(mat);
+        ItemMeta im = item.getItemMeta();
+        if (im != null) {
+            if (name != null) im.setDisplayName(name);
+            if (lore != null) im.setLore(lore);
+            item.setItemMeta(im);
+        }
+        return item;
     }
 
     private void placeBid(Player player, int amount) {
-        if (amount <= 0) {
-            player.sendMessage("§cСтавка должна быть > 0.");
-            return;
-        }
-        if (currentBidItem == null || currentLot == null) {
-            player.sendMessage("§cАукцион ещё не запущен.");
-            return;
-        }
+        if (amount <= 0) { player.sendMessage("§cСтавка должна быть > 0."); return; }
+        if (currentBidItem == null || currentLot == null) { player.sendMessage("§cАукцион ещё не запущен."); return; }
 
         int count = playerBidCounts.getOrDefault(player.getUniqueId(), 0);
         if (count >= plugin.getConfig().getInt("auction.max-bids-per-player", 999)) {
@@ -325,9 +342,8 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             return;
         }
 
-        int newEffective = amount; // бонус новичка на аукционе оставлен как было — при необходимости можно выключить
+        int newEffective = amount;
         int currentMax = getMaxEffectiveBid();
-
         if (newEffective <= currentMax || newEffective < currentMinBid) {
             int minNeed = Math.max(currentMinBid, currentMax + 1);
             player.sendMessage(plugin.getConfig().getString("messages.bid-too-low", "Ставка мала! Минимум: %min%")
@@ -354,13 +370,9 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
     }
 
     private void showStatus(Player player) {
-        if (currentLot == null || currentBidItem == null) {
-            player.sendMessage("§eСейчас аукцион не активен.");
-            return;
-        }
+        if (currentLot == null || currentBidItem == null) { player.sendMessage("§eСейчас аукцион не активен."); return; }
         String lotShown = (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
-                ? currentLot.getItemMeta().getDisplayName()
-                : currentLot.getType().name();
+                ? currentLot.getItemMeta().getDisplayName() : currentLot.getType().name();
         player.sendMessage("§aЛот: " + lotShown);
         player.sendMessage("§aСтавки в: " + currentBidItem.name() + " (мин. " + currentMinBid + ", макс: " + getMaxEffectiveBid() + ")");
         player.sendMessage(plugin.getConfig().getString("messages.auction-timeleft", "До конца аукциона: %time%.")
@@ -380,26 +392,20 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         if (effectiveBids.isEmpty()) {
             if (announceIfEmpty) Bukkit.broadcastMessage(plugin.getConfig().getString("messages.no-bids", "Аукцион завершён без ставок."));
             returnDepositsToAll();
-            saveData();
-            plugin.saveDataConfig();
+            saveData(); plugin.saveDataConfig();
             return;
         }
 
         if (isTroll) {
             Bukkit.broadcastMessage(plugin.getConfig().getString("messages.auction-end-troll", "Тролль! Ставки возвращены."));
             returnDepositsToAll();
-            saveData();
-            plugin.saveDataConfig();
+            saveData(); plugin.saveDataConfig();
             return;
         }
 
-        UUID winner = null;
-        int maxEff = 0;
+        UUID winner = null; int maxEff = 0;
         for (Map.Entry<UUID, Integer> e : effectiveBids.entrySet()) {
-            if (e.getValue() > maxEff) {
-                maxEff = e.getValue();
-                winner = e.getKey();
-            }
+            if (e.getValue() > maxEff) { maxEff = e.getValue(); winner = e.getKey(); }
         }
 
         boolean persistOffline = plugin.getConfig().getBoolean("auction.persist-returns-for-offline-losers", true);
@@ -407,14 +413,12 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         for (Map.Entry<UUID, Integer> e : deposits.entrySet()) {
             UUID uid = e.getKey();
             if (winner != null && uid.equals(winner)) continue;
-            int dep = e.getValue();
-            if (dep <= 0) continue;
+            int dep = e.getValue(); if (dep <= 0) continue;
             Player p = Bukkit.getPlayer(uid);
             if (p != null) {
                 p.getInventory().addItem(new ItemStack(currentBidItem, dep));
                 p.sendMessage(plugin.getConfig().getString("messages.returned", "Возвращено: %amount% %biditem%.")
-                        .replace("%amount%", String.valueOf(dep))
-                        .replace("%biditem%", currentBidItem.name()));
+                        .replace("%amount%", String.valueOf(dep)).replace("%biditem%", currentBidItem.name()));
             } else if (persistOffline) {
                 pendingReturns.computeIfAbsent(uid, k -> new HashMap<>())
                         .merge(currentBidItem.name(), dep, Integer::sum);
@@ -423,8 +427,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
 
         if (winner != null) {
             String lotName = (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
-                    ? currentLot.getItemMeta().getDisplayName()
-                    : currentLot.getType().name();
+                    ? currentLot.getItemMeta().getDisplayName() : currentLot.getType().name();
 
             Player w = Bukkit.getPlayer(winner);
             if (w != null) {
@@ -451,22 +454,18 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             }
         }
 
-        saveData();
-        plugin.saveDataConfig();
+        saveData(); plugin.saveDataConfig();
     }
 
     private void returnDepositsToAll() {
         boolean persistOffline = plugin.getConfig().getBoolean("auction.persist-returns-for-offline-losers", true);
         for (Map.Entry<UUID, Integer> e : deposits.entrySet()) {
-            UUID uid = e.getKey();
-            int dep = e.getValue();
-            if (dep <= 0) continue;
+            UUID uid = e.getKey(); int dep = e.getValue(); if (dep <= 0) continue;
             Player p = Bukkit.getPlayer(uid);
             if (p != null) {
                 p.getInventory().addItem(new ItemStack(currentBidItem, dep));
                 p.sendMessage(plugin.getConfig().getString("messages.returned", "Возвращено: %amount% %biditem%.")
-                        .replace("%amount%", String.valueOf(dep))
-                        .replace("%biditem%", currentBidItem.name()));
+                        .replace("%amount%", String.valueOf(dep)).replace("%biditem%", currentBidItem.name()));
             } else if (persistOffline) {
                 pendingReturns.computeIfAbsent(uid, k -> new HashMap<>())
                         .merge(currentBidItem.name(), dep, Integer::sum);
@@ -490,6 +489,18 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         }
         lastActionTime.put(player.getUniqueId(), now);
         return false;
+    }
+
+    @EventHandler
+    public void onPreviewClick(InventoryClickEvent e) {
+        String title = plugin.getConfig().getString("gui.auction-preview-title", "Auction Preview");
+        if (e.getView() != null && title.equals(e.getView().getTitle())) e.setCancelled(true);
+    }
+
+    @EventHandler
+    public void onPreviewDrag(InventoryDragEvent e) {
+        String title = plugin.getConfig().getString("gui.auction-preview-title", "Auction Preview");
+        if (e.getView() != null && title.equals(e.getView().getTitle())) e.setCancelled(true);
     }
 
     @EventHandler
@@ -534,8 +545,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                     int give = Math.min(left, maxStack);
                     ItemStack stack = new ItemStack(mat, give);
                     HashMap<Integer, ItemStack> overflow = e.getPlayer().getInventory().addItem(stack);
-                    int notAdded = 0;
-                    for (ItemStack s : overflow.values()) notAdded += s.getAmount();
+                    int notAdded = 0; for (ItemStack s : overflow.values()) notAdded += s.getAmount();
                     int delivered = give - notAdded;
 
                     if (delivered > 0) {
@@ -548,18 +558,13 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                     if (delivered == 0) break;
                 }
 
-                if (left <= 0) {
-                    it.remove();
-                } else {
-                    en.setValue(left);
-                    break;
-                }
+                if (left <= 0) it.remove();
+                else { en.setValue(left); break; }
             }
             if (returns.isEmpty()) pendingReturns.remove(id);
         }
 
-        saveData();
-        plugin.saveDataConfig();
+        saveData(); plugin.saveDataConfig();
     }
 
     public void saveData() {
