@@ -139,8 +139,12 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                 new ItemStack(Material.NETHERITE_BOOTS)
         };
         for (ItemStack piece : armor) {
-            piece.addEnchantment(Enchantment.PROTECTION_ENVIRONMENTAL, 4);
-            piece.addEnchantment(Enchantment.DURABILITY, 3);
+            ItemMeta pm = piece.getItemMeta();
+            if (pm != null) {
+                pm.addEnchant(Enchantment.PROTECTION, 4, true);
+                pm.addEnchant(Enchantment.UNBREAKING, 3, true);
+                piece.setItemMeta(pm);
+            }
             box.getInventory().addItem(piece);
         }
         box.getInventory().addItem(new ItemStack(Material.DIAMOND, 64));
@@ -474,7 +478,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             }
         }
 
-        // Возвраты проигравшим — по валютам, с разбиением по стакам
+        // Возвраты проигравшим — по валютам
         Map<String, Integer> returns = pendingReturns.get(id);
         if (returns != null && !returns.isEmpty()) {
             Iterator<Map.Entry<String, Integer>> it = returns.entrySet().iterator();
@@ -502,7 +506,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                     }
 
                     left -= delivered;
-                    if (delivered == 0) break; // инвентарь забит
+                    if (delivered == 0) break;
                 }
 
                 if (left <= 0) {
