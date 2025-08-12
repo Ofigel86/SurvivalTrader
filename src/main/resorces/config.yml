@@ -1,15 +1,4 @@
-# SurvivalTrader Config — всё ванильно, валюта = предметы
-
-possible-bid-items:
-  - DIRT
-  - SAND
-  - COBBLESTONE
-  - OAK_LOG
-  - IRON_INGOT
-  - GOLD_INGOT
-  - DIAMOND
-  - EMERALD
-  - ANCIENT_DEBRIS
+# SurvivalTrader Config — ваниль, без внешней экономики
 
 gui:
   shop-title: "Survival Shop"
@@ -43,32 +32,44 @@ shop:
     - item: ARROW
       amount: 32
       price: 10
-  newbie-time: 3600            # сек игры для статуса "новичок"
-  newbie-level: 10             # или уровень ниже порога
-  newbie-discount: 20          # % скидки для новичков
-  max-purchases-per-item: 10   # на игрока за обновление
+
+  # Только из этого белого списка выбирается валюта магазина (дорогие предметы исключены)
+  allowed-bid-items:
+    - DIRT
+    - COBBLESTONE
+    - STONE
+    - SAND
+    - OAK_LOG
+
+  max-purchases-per-item: 10
   global-max-purchases-per-item: 20
-  anti-spam-cooldown: 10       # сек
+  anti-spam-cooldown: 10
 
 auction:
   duration: 300                # сек (продакшн: 18000 = 5 часов)
   anti-spam-cooldown: 10
-  possible-lots:
+  troll-chance: 30
+  fake-bid-item: DIRT          # валюта для сообщения при тролле
+  min-bid-base: 1
+
+  # Валюта ставок (фиксированная, не рандом)
+  bid-item: DIAMOND
+
+  # Список OP-лотов (всегда только из этого списка или сгенерированный алмазный шмот)
+  op-lots:
     - TOTEM_OF_UNDYING
     - ELYTRA
     - NETHERITE_SWORD
     - BEACON
     - ENCHANTED_GOLDEN_APPLE
-  troll-chance: 30
-  fake-bid-item: DIRT
-  min-bid-base: 1
-  newbie-resource-threshold: 100
-  starting-bonus: 10
-  max-bids-per-player: 5
-  low-online-threshold: 5
-  high-online-threshold: 10
-  op-lot-chance-low: 10
-  op-lot-chance-high: 50
+    - NETHERITE_PICKAXE
+    - NETHERITE_CHESTPLATE
+    - ENCHANTED_BOOK
+
+  # Генерировать ли рандомный зачарованный алмазный предмет как один из вариантов
+  generate-diamond-gear: true
+
+  # Возвраты депозитов оффлайн-проигравшим сохранять до входа
   persist-returns-for-offline-losers: true
 
 messages:
@@ -78,7 +79,6 @@ messages:
   no-items: "§cНедостаточно %biditem% (нужно %price%)!"
   anti-spam: "§cПодожди %time% сек."
   limit-reached: "§cЛимит достигнут!"
-  newbie-bonus: "§aНовичок: скидка %discount%!"
   inventory-full: "§cНедостаточно места в инвентаре!"
   shop-timeleft: "§7Обновление магазина через %time%."
 
