@@ -1,0 +1,98 @@
+# SurvivalTrader Config — всё ванильно, валюта = предметы
+
+possible-bid-items:
+  - DIRT
+  - SAND
+  - COBBLESTONE
+  - OAK_LOG
+  - IRON_INGOT
+  - GOLD_INGOT
+  - DIAMOND
+  - EMERALD
+  - ANCIENT_DEBRIS
+
+gui:
+  shop-title: "Survival Shop"
+  auction-preview-title: "Auction Preview"
+
+shop:
+  update-interval: 60          # сек (продакшн: 3600)
+  items-per-update: 3
+  possible-items:
+    - item: BREAD
+      amount: 16
+      price: 10
+    - item: COOKED_BEEF
+      amount: 8
+      price: 20
+    - item: IRON_PICKAXE
+      amount: 1
+      price: 50
+    - item: OAK_LOG
+      amount: 32
+      price: 15
+    - item: IRON_INGOT
+      amount: 10
+      price: 30
+    - item: SHIELD
+      amount: 1
+      price: 25
+    - item: TORCH
+      amount: 64
+      price: 5
+    - item: ARROW
+      amount: 32
+      price: 10
+  newbie-time: 3600            # сек игры для статуса "новичок"
+  newbie-level: 10             # или уровень ниже порога
+  newbie-discount: 20          # % скидки для новичков
+  max-purchases-per-item: 10   # на игрока за обновление
+  global-max-purchases-per-item: 20
+  anti-spam-cooldown: 10       # сек
+
+auction:
+  duration: 300                # сек (продакшн: 18000 = 5 часов)
+  anti-spam-cooldown: 10
+  possible-lots:
+    - TOTEM_OF_UNDYING
+    - ELYTRA
+    - NETHERITE_SWORD
+    - BEACON
+    - ENCHANTED_GOLDEN_APPLE
+  troll-chance: 30
+  fake-bid-item: DIRT
+  min-bid-base: 1
+  newbie-resource-threshold: 100
+  starting-bonus: 10
+  max-bids-per-player: 5
+  low-online-threshold: 5
+  high-online-threshold: 10
+  op-lot-chance-low: 10
+  op-lot-chance-high: 50
+  persist-returns-for-offline-losers: true
+
+messages:
+  # Магазин
+  shop-update: "§aМагазин обновлён! Новые товары в /shop."
+  success-buy: "§aОбмен успешен! Отдали %price% %biditem% за %amount% %item%."
+  no-items: "§cНедостаточно %biditem% (нужно %price%)!"
+  anti-spam: "§cПодожди %time% сек."
+  limit-reached: "§cЛимит достигнут!"
+  newbie-bonus: "§aНовичок: скидка %discount%!"
+  inventory-full: "§cНедостаточно места в инвентаре!"
+  shop-timeleft: "§7Обновление магазина через %time%."
+
+  # Аукцион
+  new-auction: "§aНовый аукцион! Лот: %lot%. Ставки в %biditem% (мин. %minbid%)."
+  new-auction-troll: "§aНовый аукцион! Лот: Эпический Шалкер с сетом бога! Ставки в %fakebiditem% (мин. %minbid%)."
+  bid-success: "§aСтавка принята! (Эффективно: %effective%)."
+  starting-bonus-applied: "§aБонус: +%bonus% к ставке!"
+  bid-too-low: "§cСтавка мала! Минимум: %min%."
+  auction-end: "§aАукцион завершён! Победитель: %winner% с %amount% %biditem%. Лот: %lot%."
+  auction-end-troll: "§aТролль! Ставки возвращены."
+  no-bids: "§aАукцион завершён без ставок."
+  returned: "§aВозвращено: %amount% %biditem%."
+  reward-saved: "§aВаш приз сохранён и будет выдан при входе."
+  reward-claimed: "§aВы получили сохранённый приз с аукциона!"
+  auction-timeleft: "§7До конца аукциона: %time%."
+  cannot-decrease-bid: "§cНельзя уменьшать свою ставку."

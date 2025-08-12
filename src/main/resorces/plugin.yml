@@ -1,0 +1,24 @@
+name: SurvivalTrader
+version: '${project.version}'
+main: ru.yourname.survivaltrader.Main
+api-version: '1.21'
+author: YourName
+description: Vanilla shop + auction with troll and YAML persistence.
+
+commands:
+  shop:
+    description: Open the survival shop.
+    usage: /shop
+    permission: survivaltrader.shop
+  ah:
+    description: Auction commands.
+    usage: /ah [list|preview|bid <amount>]
+    permission: survivaltrader.ah
+
+permissions:
+  survivaltrader.shop:
+    description: Access to shop.
+    default: true
+  survivaltrader.ah:
+    description: Access to auction.
+    default: true
