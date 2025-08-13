@@ -2,7 +2,12 @@ package ru.yourname.survivaltrader;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.NamespacedKey;
 import org.bukkit.block.ShulkerBox;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -19,10 +24,15 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BlockStateMeta;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.SkullMeta;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.StringUtil;
 import org.jetbrains.annotations.NotNull;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 
 public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
@@ -30,23 +40,51 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
     private final Main plugin;
     private final Random random = new Random();
 
+    // PDC keys for GUI
+    private final NamespacedKey KEY_TYPE;
+    private final NamespacedKey KEY_VAL;
+
     private Material currentBidItem;
     private int currentMinBid;
     private ItemStack currentLot;
     private boolean isTroll = false;
 
+    // ставки
     private final Map<UUID, Integer> effectiveBids = new HashMap<>();
     private final Map<UUID, Integer> deposits = new HashMap<>();
     private final Map<UUID, Integer> playerBidCounts = new HashMap<>();
     private final Map<UUID, Long> lastActionTime = new HashMap<>();
 
+    // оффлайн-награды и возвраты
     private final Map<UUID, List<ItemStack>> pendingRewards = new HashMap<>();
     private final Map<UUID, Map<String, Integer>> pendingReturns = new HashMap<>();
 
     private long lastAuctionStart;
 
+    // GUI layout
+    private static final int INV_SIZE = 54;
+    private static final int LOT_SLOT = 22;
+    private static final int INFO_SLOT = 49;
+    private static final int PREVIEW_SLOT = 48;
+    private static final int NEXT_BID_SLOT = 51;
+    private static final int INC1_SLOT = 40;
+    private static final int INC5_SLOT = 41;
+    private static final int INC16_SLOT = 42;
+    private static final int INC64_SLOT = 43;
+    private static final int[] BIDDER_SLOTS = { 28, 29, 37, 38, 46, 47 };
+
+    // BossBar
+    private BossBar bossBar;
+    private BukkitTask bossbarTask;
+
     public AuctionManager(Main plugin) {
         this.plugin = plugin;
+        this.KEY_TYPE = new NamespacedKey(plugin, "auc_type");
+        this.KEY_VAL = new NamespacedKey(plugin, "auc_val");
+    }
+
+    private String auctionTitle() {
+        return plugin.getConfig().getString("gui.auction-title", "Auction");
     }
 
     public void startAuctionTimer() {
@@ -88,9 +126,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         int chance = Math.max(0, Math.min(100, plugin.getConfig().getInt("auction.troll-chance", 0)));
         isTroll = random.nextInt(100) < chance;
 
-        currentBidItem = Material.matchMaterial(plugin.getConfig().getString("auction.bid-item", "DIAMOND"));
-        if (currentBidItem == null) currentBidItem = Material.DIAMOND;
-
+        currentBidItem = resolveBidItem();
         currentMinBid = Math.max(1, plugin.getConfig().getInt("auction.min-bid-base", 1));
 
         if (isTroll) {
@@ -99,7 +135,6 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                     .replace("%fakebiditem%", plugin.getConfig().getString("auction.fake-bid-item", "DIRT"))
                     .replace("%minbid%", String.valueOf(currentMinBid)));
         } else {
-            // Всегда OP: либо из списка op-lots, либо генерация алмазного шмота с чарами
             List<String> opLots = plugin.getConfig().getStringList("auction.op-lots");
             if (opLots.isEmpty()) {
                 opLots = Arrays.asList("TOTEM_OF_UNDYING","ELYTRA","NETHERITE_SWORD","BEACON","ENCHANTED_GOLDEN_APPLE","ENCHANTED_BOOK");
@@ -113,36 +148,85 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
                 currentLot = new ItemStack(Material.valueOf(lotName));
                 ItemMeta meta = currentLot.getItemMeta();
                 if (meta != null) {
-                    meta.setDisplayName("§b" + lotName.toLowerCase().replace('_', ' ') + " §6[OP]");
+                    meta.setDisplayName("§b" + pretty(lotName) + " §6[OP]");
                     currentLot.setItemMeta(meta);
                 }
             }
 
-            String lotNameShown = (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
-                    ? currentLot.getItemMeta().getDisplayName()
-                    : currentLot.getType().name();
+            String lotShown = (currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
+                    ? currentLot.getItemMeta().getDisplayName() : currentLot.getType().name();
 
             Bukkit.broadcastMessage(plugin.getConfig().getString("messages.new-auction", "Новый аукцион!")
-                    .replace("%lot%", lotNameShown)
+                    .replace("%lot%", lotShown)
                     .replace("%biditem%", currentBidItem.name())
                     .replace("%minbid%", String.valueOf(currentMinBid)));
         }
+
+        // BossBar
+        if (bossbarEnabled()) {
+            ensureBossBarCreated();
+            updateBossBar(); // сразу обновим
+            startBossBarTask(); // и запустим апдейтер
+        } else {
+            clearBossBar();
+        }
+    }
+
+    private Material resolveBidItem() {
+        // Если тролль — для логичности выставим валюту = fake-bid-item (видно в BossBar и GUI)
+        if (isTroll) {
+            String fake = plugin.getConfig().getString("auction.fake-bid-item", "DIRT");
+            Material mm = Material.matchMaterial(fake);
+            return mm != null ? mm : Material.DIRT;
+        }
+
+        // Ротация валют: daily | hourly | off
+        String rotation = plugin.getConfig().getString("auction.bid-rotation", "off").toLowerCase(Locale.ROOT);
+        List<String> items = plugin.getConfig().getStringList("auction.bid-items");
+        if (items.isEmpty()) items = Arrays.asList("DIAMOND","EMERALD","NETHERITE_INGOT","NETHERITE_SCRAP","ANCIENT_DEBRIS","ENCHANTED_GOLDEN_APPLE");
+
+        if (!rotation.equals("off")) {
+            LocalDateTime now = LocalDateTime.now(ZoneId.systemDefault());
+            int idx = 0;
+            if (rotation.equals("daily")) {
+                idx = (now.getDayOfYear()) % items.size();
+            } else if (rotation.equals("hourly")) {
+                idx = (now.getDayOfYear() * 24 + now.getHour()) % items.size();
+            }
+            Material m = Material.matchMaterial(items.get(idx));
+            if (m != null) return m;
+        }
+
+        // Бэкап-логика (если rotation=off): fixed | random
+        String mode = plugin.getConfig().getString("auction.bid-item-mode", "random").toLowerCase(Locale.ROOT);
+        if (mode.equals("fixed")) {
+            String fixed = plugin.getConfig().getString("auction.fixed-bid-item", items.get(0));
+            Material fm = Material.matchMaterial(fixed);
+            return fm != null ? fm : Material.matchMaterial(items.get(0));
+        } else {
+            String pick = items.get(random.nextInt(items.size()));
+            Material rm = Material.matchMaterial(pick);
+            return rm != null ? rm : Material.DIAMOND;
+        }
+    }
+
+    private String pretty(String key) {
+        return key.toLowerCase(Locale.ROOT).replace('_', ' ');
     }
 
     private ItemStack generateDiamondGear() {
         Material[] pool = new Material[] {
                 Material.DIAMOND_SWORD, Material.DIAMOND_AXE, Material.DIAMOND_PICKAXE,
                 Material.DIAMOND_SHOVEL, Material.DIAMOND_HELMET, Material.DIAMOND_CHESTPLATE,
-                Material.DIAMOND_LEGGINGS, Material.DIAMOND_BOOTS, Material.DIAMOND_HOE, Material.BOW, Material.CROSSBOW
+                Material.DIAMOND_LEGGINGS, Material.DIAMOND_BOOTS, Material.DIAMOND_HOE,
+                Material.BOW, Material.CROSSBOW
         };
         Material type = pool[random.nextInt(pool.length)];
         ItemStack it = new ItemStack(type, 1);
         ItemMeta meta = it.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName("§b" + type.name().toLowerCase().replace('_', ' ') + " §6[OP]");
-            List<String> lore = new ArrayList<>();
-            lore.add("§7Алмазный предмет с усиленными чарами");
-            meta.setLore(lore);
+            meta.setDisplayName("§b" + pretty(type.name()) + " §6[OP]");
+            meta.setLore(Collections.singletonList("§7Алмазный предмет с усиленными чарами"));
             it.setItemMeta(meta);
         }
         if (type == Material.DIAMOND_SWORD) {
@@ -200,6 +284,169 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         return shulker;
     }
 
+    // GUI
+
+    private void openAuctionGui(Player player) {
+        if (currentLot == null || currentBidItem == null) {
+            player.sendMessage("§eСейчас аукцион не активен.");
+            return;
+        }
+        Inventory inv = Bukkit.createInventory(null, INV_SIZE, auctionTitle());
+        fillBorder(inv, Material.BLACK_STAINED_GLASS_PANE, Material.GRAY_STAINED_GLASS_PANE);
+
+        // Лот в центре
+        inv.setItem(LOT_SLOT, currentLot.clone());
+
+        // Инфо
+        ItemStack info = makeItem(Material.BOOK, "§aИнформация", Arrays.asList(
+                "§7Валюта: §b" + currentBidItem.name(),
+                "§7Мин. ставка: §6" + currentMinBid,
+                "§7Текущий максимум: §f" + getMaxEffectiveBid(),
+                "§7Ваша ставка: §f" + deposits.getOrDefault(player.getUniqueId(), 0),
+                "§7До конца: §f" + formatDuration(getAuctionSecondsLeft()),
+                "§8Используйте кнопки справа, чтобы повысить ставку"
+        ));
+        tag(info, "info", 0);
+        inv.setItem(INFO_SLOT, info);
+
+        // Предпросмотр
+        ItemStack preview = makeItem(Material.ENDER_EYE, "§bПредпросмотр лота", Collections.singletonList("§7Открыть содержимое/детали"));
+        tag(preview, "preview", 0);
+        inv.setItem(PREVIEW_SLOT, preview);
+
+        // Кнопка “next bid” = max+1
+        int nextMin = Math.max(getMaxEffectiveBid() + 1, currentMinBid);
+        ItemStack nextBid = makeItem(currentBidItem, "§aСделать ставку: §6" + nextMin, Collections.singletonList("§7Повыcить до следующего минимума"));
+        tag(nextBid, "bid-next", nextMin);
+        inv.setItem(NEXT_BID_SLOT, nextBid);
+
+        // Инкременты
+        inv.setItem(INC1_SLOT, makeIncButton(1));
+        inv.setItem(INC5_SLOT, makeIncButton(5));
+        inv.setItem(INC16_SLOT, makeIncButton(16));
+        inv.setItem(INC64_SLOT, makeIncButton(64));
+
+        // Топ-ставившие
+        placeBidders(inv);
+
+        // Добавим игрока в BossBar, если включен
+        if (bossbarEnabled() && bossBar != null) {
+            bossBar.addPlayer(player);
+        }
+
+        player.openInventory(inv);
+    }
+
+    private void placeBidders(Inventory inv) {
+        List<Map.Entry<UUID, Integer>> list = new ArrayList<>(effectiveBids.entrySet());
+        list.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+
+        int idx = 0;
+        for (int slot : BIDDER_SLOTS) {
+            if (idx >= list.size()) break;
+            UUID uid = list.get(idx).getKey();
+            int eff = list.get(idx).getValue();
+            int dep = deposits.getOrDefault(uid, 0);
+
+            OfflinePlayer off = Bukkit.getOfflinePlayer(uid);
+            ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+            ItemMeta im = head.getItemMeta();
+            if (im instanceof SkullMeta sm) {
+                sm.setOwningPlayer(off);
+                sm.setDisplayName("§f" + (off.getName() == null ? "Игрок" : off.getName()));
+                sm.setLore(Arrays.asList(
+                        "§7Ставка: §6" + eff + " §e" + currentBidItem.name(),
+                        "§7Депозит: §f" + dep
+                ));
+                head.setItemMeta(sm);
+            } else if (im != null) {
+                im.setDisplayName("§f" + (off.getName() == null ? "Игрок" : off.getName()));
+                im.setLore(Arrays.asList(
+                        "§7Ставка: §6" + eff + " §e" + currentBidItem.name(),
+                        "§7Депозит: §f" + dep
+                ));
+                head.setItemMeta(im);
+            }
+            inv.setItem(slot, head);
+            idx++;
+        }
+    }
+
+    private ItemStack makeIncButton(int inc) {
+        ItemStack it = new ItemStack(currentBidItem);
+        ItemMeta im = it.getItemMeta();
+        if (im != null) {
+            im.setDisplayName("§a+ " + inc + " §e" + currentBidItem.name());
+            im.setLore(Collections.singletonList("§7Попытаться повысить ставку на " + inc));
+            it.setItemMeta(im);
+        }
+        tag(it, "bid-inc", inc);
+        return it;
+    }
+
+    private void fillBorder(Inventory inv, Material border, Material background) {
+        ItemStack borderPane = makePane(border);
+        ItemStack backPane = makePane(background);
+
+        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, backPane);
+
+        int rows = inv.getSize() / 9;
+        for (int c = 0; c < 9; c++) {
+            inv.setItem(c, borderPane);
+            inv.setItem((rows - 1) * 9 + c, borderPane);
+        }
+        for (int r = 0; r < rows; r++) {
+            inv.setItem(r * 9, borderPane);
+            inv.setItem(r * 9 + 8, borderPane);
+        }
+    }
+
+    private ItemStack makePane(Material mat) {
+        ItemStack pane = new ItemStack(mat);
+        ItemMeta m = pane.getItemMeta();
+        if (m != null) {
+            m.setDisplayName(" ");
+            pane.setItemMeta(m);
+        }
+        return pane;
+    }
+
+    private ItemStack makeItem(Material mat, String name, List<String> lore) {
+        ItemStack item = new ItemStack(mat);
+        ItemMeta im = item.getItemMeta();
+        if (im != null) {
+            if (name != null) im.setDisplayName(name);
+            if (lore != null) im.setLore(lore);
+            item.setItemMeta(im);
+        }
+        return item;
+    }
+
+    private void tag(ItemStack item, String type, int val) {
+        ItemMeta im = item.getItemMeta();
+        if (im == null) return;
+        im.getPersistentDataContainer().set(KEY_TYPE, PersistentDataType.STRING, type);
+        im.getPersistentDataContainer().set(KEY_VAL, PersistentDataType.INTEGER, val);
+        item.setItemMeta(im);
+    }
+
+    private String getTagType(ItemStack item) {
+        if (item == null) return null;
+        ItemMeta im = item.getItemMeta();
+        if (im == null) return null;
+        return im.getPersistentDataContainer().get(KEY_TYPE, PersistentDataType.STRING);
+    }
+
+    private int getTagVal(ItemStack item) {
+        if (item == null) return 0;
+        ItemMeta im = item.getItemMeta();
+        if (im == null) return 0;
+        Integer v = im.getPersistentDataContainer().get(KEY_VAL, PersistentDataType.INTEGER);
+        return v == null ? 0 : v;
+    }
+
+    // Команды
+
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command cmd, @NotNull String label, @NotNull String[] args) {
         if (!(sender instanceof Player player)) return true;
@@ -208,8 +455,8 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             return true;
         }
 
-        if (args.length == 0 || args[0].equalsIgnoreCase("list")) {
-            showStatus(player);
+        if (args.length == 0 || args[0].equalsIgnoreCase("list") || args[0].equalsIgnoreCase("gui")) {
+            openAuctionGui(player);
             return true;
         }
 
@@ -223,6 +470,8 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             try {
                 int amount = Integer.parseInt(args[1]);
                 placeBid(player, amount);
+                // обновим BossBar сразу
+                updateBossBar();
             } catch (NumberFormatException e) {
                 player.sendMessage("§cНеверное число!");
             }
@@ -231,6 +480,51 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
 
         return false;
     }
+
+    // Клики в GUI
+
+    @EventHandler
+    public void onAuctionClick(InventoryClickEvent e) {
+        if (e.getView() == null || e.getView().getTitle() == null) return;
+        if (!auctionTitle().equals(e.getView().getTitle())) return;
+        e.setCancelled(true);
+        if (!(e.getWhoClicked() instanceof Player player)) return;
+
+        ItemStack clicked = e.getCurrentItem();
+        if (clicked == null || clicked.getType() == Material.AIR) return;
+
+        String type = getTagType(clicked);
+        int val = getTagVal(clicked);
+
+        if (type == null) return;
+        if (checkAntiSpam(player, plugin.getConfig().getInt("auction.anti-spam-cooldown", 10))) return;
+
+        switch (type) {
+            case "preview" -> openPreview(player);
+            case "bid-next" -> {
+                int next = Math.max(getMaxEffectiveBid() + 1, currentMinBid);
+                placeBid(player, next);
+                updateBossBar();
+                Bukkit.getScheduler().runTask(plugin, () -> openAuctionGui(player));
+            }
+            case "bid-inc" -> {
+                int curr = deposits.getOrDefault(player.getUniqueId(), 0);
+                int target = curr + Math.max(1, val);
+                placeBid(player, target);
+                updateBossBar();
+                Bukkit.getScheduler().runTask(plugin, () -> openAuctionGui(player));
+            }
+            default -> {}
+        }
+    }
+
+    @EventHandler
+    public void onAuctionDrag(InventoryDragEvent e) {
+        if (e.getView() == null || e.getView().getTitle() == null) return;
+        if (auctionTitle().equals(e.getView().getTitle())) e.setCancelled(true);
+    }
+
+    // Предпросмотр
 
     private void openPreview(Player player) {
         if (currentLot == null) {
@@ -249,12 +543,10 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
 
             ItemStack[] contents = box.getInventory().getContents();
             int idx = 0;
-            for (int r = 1; r <= 4; r++) { // внутренние 4 ряда (без рамки)
+            for (int r = 1; r <= 4; r++) {
                 for (int c = 1; c <= 7; c++) {
                     int slot = r * 9 + c;
-                    if (idx < contents.length && contents[idx] != null) {
-                        inv.setItem(slot, contents[idx].clone());
-                    }
+                    if (idx < contents.length && contents[idx] != null) inv.setItem(slot, contents[idx].clone());
                     idx++;
                 }
             }
@@ -286,49 +578,17 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         }
     }
 
-    private void fillBorder(Inventory inv, Material border, Material background) {
-        ItemStack borderPane = makePane(border);
-        ItemStack backPane = makePane(background);
-
-        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, backPane);
-
-        int rows = inv.getSize() / 9;
-        // top/bottom
-        for (int c = 0; c < 9; c++) {
-            inv.setItem(c, borderPane);
-            inv.setItem((rows - 1) * 9 + c, borderPane);
-        }
-        // sides
-        for (int r = 0; r < rows; r++) {
-            inv.setItem(r * 9, borderPane);
-            inv.setItem(r * 9 + 8, borderPane);
-        }
-    }
-
-    private ItemStack makePane(Material mat) {
-        ItemStack pane = new ItemStack(mat);
-        ItemMeta m = pane.getItemMeta();
-        if (m != null) {
-            m.setDisplayName(" ");
-            pane.setItemMeta(m);
-        }
-        return pane;
-    }
-
-    private ItemStack makeItem(Material mat, String name, List<String> lore) {
-        ItemStack item = new ItemStack(mat);
-        ItemMeta im = item.getItemMeta();
-        if (im != null) {
-            if (name != null) im.setDisplayName(name);
-            if (lore != null) im.setLore(lore);
-            item.setItemMeta(im);
-        }
-        return item;
-    }
+    // Логика ставок
 
     private void placeBid(Player player, int amount) {
-        if (amount <= 0) { player.sendMessage("§cСтавка должна быть > 0."); return; }
-        if (currentBidItem == null || currentLot == null) { player.sendMessage("§cАукцион ещё не запущен."); return; }
+        if (amount <= 0) {
+            player.sendMessage("§cСтавка должна быть > 0.");
+            return;
+        }
+        if (currentBidItem == null || currentLot == null) {
+            player.sendMessage("§cАукцион ещё не запущен.");
+            return;
+        }
 
         int count = playerBidCounts.getOrDefault(player.getUniqueId(), 0);
         if (count >= plugin.getConfig().getInt("auction.max-bids-per-player", 999)) {
@@ -342,9 +602,8 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             return;
         }
 
-        int newEffective = amount;
         int currentMax = getMaxEffectiveBid();
-        if (newEffective <= currentMax || newEffective < currentMinBid) {
+        if (amount <= currentMax || amount < currentMinBid) {
             int minNeed = Math.max(currentMinBid, currentMax + 1);
             player.sendMessage(plugin.getConfig().getString("messages.bid-too-low", "Ставка мала! Минимум: %min%")
                     .replace("%min%", String.valueOf(minNeed)));
@@ -362,11 +621,29 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         }
 
         deposits.put(player.getUniqueId(), amount);
-        effectiveBids.put(player.getUniqueId(), newEffective);
+        effectiveBids.put(player.getUniqueId(), amount);
         playerBidCounts.put(player.getUniqueId(), count + 1);
 
         player.sendMessage(plugin.getConfig().getString("messages.bid-success", "Ставка принята!")
-                .replace("%effective%", String.valueOf(newEffective)));
+                .replace("%effective%", String.valueOf(amount)));
+    }
+
+    private int getMaxEffectiveBid() {
+        return effectiveBids.values().stream().max(Integer::compareTo).orElse(0);
+    }
+
+    private boolean checkAntiSpam(Player player, int cooldownSec) {
+        long now = System.currentTimeMillis();
+        long last = lastActionTime.getOrDefault(player.getUniqueId(), 0L);
+        long cdMs = Math.max(0, cooldownSec) * 1000L;
+        if (now - last < cdMs) {
+            long left = (cdMs - (now - last) + 999) / 1000;
+            player.sendMessage(plugin.getConfig().getString("messages.anti-spam", "Подожди %time% сек.")
+                    .replace("%time%", String.valueOf(left)));
+            return true;
+        }
+        lastActionTime.put(player.getUniqueId(), now);
+        return false;
     }
 
     private void showStatus(Player player) {
@@ -387,11 +664,15 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
     }
 
     public void endAuction(boolean announceIfEmpty) {
-        if (currentLot == null || currentBidItem == null) return;
+        if (currentLot == null || currentBidItem == null) {
+            clearBossBar();
+            return;
+        }
 
         if (effectiveBids.isEmpty()) {
             if (announceIfEmpty) Bukkit.broadcastMessage(plugin.getConfig().getString("messages.no-bids", "Аукцион завершён без ставок."));
             returnDepositsToAll();
+            clearBossBar();
             saveData(); plugin.saveDataConfig();
             return;
         }
@@ -399,6 +680,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         if (isTroll) {
             Bukkit.broadcastMessage(plugin.getConfig().getString("messages.auction-end-troll", "Тролль! Ставки возвращены."));
             returnDepositsToAll();
+            clearBossBar();
             saveData(); plugin.saveDataConfig();
             return;
         }
@@ -454,6 +736,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             }
         }
 
+        clearBossBar();
         saveData(); plugin.saveDataConfig();
     }
 
@@ -473,41 +756,18 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
         }
     }
 
-    private int getMaxEffectiveBid() {
-        return effectiveBids.values().stream().max(Integer::compareTo).orElse(0);
-    }
-
-    private boolean checkAntiSpam(Player player, int cooldownSec) {
-        long now = System.currentTimeMillis();
-        long last = lastActionTime.getOrDefault(player.getUniqueId(), 0L);
-        long cdMs = Math.max(0, cooldownSec) * 1000L;
-        if (now - last < cdMs) {
-            long left = (cdMs - (now - last) + 999) / 1000;
-            player.sendMessage(plugin.getConfig().getString("messages.anti-spam", "Подожди %time% сек.")
-                    .replace("%time%", String.valueOf(left)));
-            return true;
-        }
-        lastActionTime.put(player.getUniqueId(), now);
-        return false;
-    }
-
-    @EventHandler
-    public void onPreviewClick(InventoryClickEvent e) {
-        String title = plugin.getConfig().getString("gui.auction-preview-title", "Auction Preview");
-        if (e.getView() != null && title.equals(e.getView().getTitle())) e.setCancelled(true);
-    }
-
-    @EventHandler
-    public void onPreviewDrag(InventoryDragEvent e) {
-        String title = plugin.getConfig().getString("gui.auction-preview-title", "Auction Preview");
-        if (e.getView() != null && title.equals(e.getView().getTitle())) e.setCancelled(true);
-    }
+    // Join: награды и возвраты + BossBar для новых игроков
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         UUID id = e.getPlayer().getUniqueId();
 
-        // Награды победителя (списком)
+        // BossBar: если активен — добавить игрока
+        if (bossbarEnabled() && bossBar != null) {
+            bossBar.addPlayer(e.getPlayer());
+        }
+
+        // Награды
         List<ItemStack> list = pendingRewards.get(id);
         if (list != null && !list.isEmpty()) {
             Iterator<ItemStack> it = list.iterator();
@@ -528,7 +788,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             }
         }
 
-        // Возвраты проигравшим
+        // Возвраты
         Map<String, Integer> returns = pendingReturns.get(id);
         if (returns != null && !returns.isEmpty()) {
             Iterator<Map.Entry<String, Integer>> it = returns.entrySet().iterator();
@@ -550,8 +810,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
 
                     if (delivered > 0) {
                         e.getPlayer().sendMessage(plugin.getConfig().getString("messages.returned", "Возвращено: %amount% %biditem%.")
-                                .replace("%amount%", String.valueOf(delivered))
-                                .replace("%biditem%", mat.name()));
+                                .replace("%amount%", String.valueOf(delivered)).replace("%biditem%", mat.name()));
                     }
 
                     left -= delivered;
@@ -566,6 +825,8 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
 
         saveData(); plugin.saveDataConfig();
     }
+
+    // Сохранение/загрузка
 
     public void saveData() {
         FileConfiguration data = plugin.getDataConfig();
@@ -689,7 +950,7 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!"ah".equalsIgnoreCase(command.getName())) return Collections.emptyList();
         if (args.length == 1) {
-            return StringUtil.copyPartialMatches(args[0], Arrays.asList("list", "preview", "bid"), new ArrayList<>());
+            return StringUtil.copyPartialMatches(args[0], Arrays.asList("list", "gui", "preview", "bid"), new ArrayList<>());
         }
         if (args.length == 2 && "bid".equalsIgnoreCase(args[0])) {
             int min = Math.max(currentMinBid, getMaxEffectiveBid() + 1);
@@ -697,6 +958,83 @@ public class AuctionManager implements CommandExecutor, Listener, TabCompleter {
             return StringUtil.copyPartialMatches(args[1], nums, new ArrayList<>());
         }
         return Collections.emptyList();
+    }
+
+    // BossBar
+
+    private boolean bossbarEnabled() {
+        return plugin.getConfig().getBoolean("auction.bossbar.enabled", true);
+    }
+
+    private BarColor bossbarColor() {
+        String c = plugin.getConfig().getString("auction.bossbar.color", "GREEN").toUpperCase(Locale.ROOT);
+        try { return BarColor.valueOf(c); } catch (Exception ignored) { return BarColor.GREEN; }
+    }
+
+    private BarStyle bossbarStyle() {
+        String s = plugin.getConfig().getString("auction.bossbar.style", "SEGMENTED_10").toUpperCase(Locale.ROOT);
+        try { return BarStyle.valueOf(s); } catch (Exception ignored) { return BarStyle.SOLID; }
+    }
+
+    private void ensureBossBarCreated() {
+        String title = bossbarTitle();
+        if (bossBar == null) {
+            bossBar = Bukkit.createBossBar(title, bossbarColor(), bossbarStyle());
+        } else {
+            bossBar.setTitle(title);
+            bossBar.setColor(bossbarColor());
+            bossBar.setStyle(bossbarStyle());
+        }
+        // показать всем игрокам (можно сделать режим показа по желанию)
+        for (Player p : Bukkit.getOnlinePlayers()) bossBar.addPlayer(p);
+        bossBar.setVisible(true);
+    }
+
+    private String bossbarTitle() {
+        String tpl = plugin.getConfig().getString("auction.bossbar.title", "Аукцион: %lot% | %biditem% | макс %max% | %left%");
+        String lotShown = (currentLot != null && currentLot.hasItemMeta() && currentLot.getItemMeta().hasDisplayName())
+                ? currentLot.getItemMeta().getDisplayName()
+                : (currentLot == null ? "—" : currentLot.getType().name());
+        return tpl
+                .replace("%lot%", lotShown)
+                .replace("%biditem%", currentBidItem == null ? "—" : currentBidItem.name())
+                .replace("%max%", String.valueOf(getMaxEffectiveBid()))
+                .replace("%left%", formatDuration(getAuctionSecondsLeft()));
+    }
+
+    private void updateBossBar() {
+        if (!bossbarEnabled() || bossBar == null) return;
+        bossBar.setTitle(bossbarTitle());
+        long dur = Math.max(1, plugin.getConfig().getLong("auction.duration", 300));
+        double left = getAuctionSecondsLeft();
+        double progress = Math.max(0.0, Math.min(1.0, left / dur));
+        bossBar.setProgress(progress);
+
+        // цвет по прогрессу
+        if (progress > 0.5) bossBar.setColor(BarColor.GREEN);
+        else if (progress > 0.2) bossBar.setColor(BarColor.YELLOW);
+        else bossBar.setColor(BarColor.RED);
+    }
+
+    private void startBossBarTask() {
+        stopBossBarTask();
+        bossbarTask = Bukkit.getScheduler().runTaskTimer(plugin, this::updateBossBar, 20L, 20L);
+    }
+
+    private void stopBossBarTask() {
+        if (bossbarTask != null) {
+            bossbarTask.cancel();
+            bossbarTask = null;
+        }
+    }
+
+    public void clearBossBar() {
+        stopBossBarTask();
+        if (bossBar != null) {
+            bossBar.removeAll();
+            bossBar.setVisible(false);
+            bossBar = null;
+        }
     }
 
     private static String formatDuration(long seconds) {
