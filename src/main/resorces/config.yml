@@ -1,12 +1,19 @@
-# SurvivalTrader Config — ваниль, без внешней экономики
+# SurvivalTrader config.yml
+# Ванильный магазин и аукцион на предметах для Paper 1.21
 
 gui:
   shop-title: "Survival Shop"
+  auction-title: "Auction"
   auction-preview-title: "Auction Preview"
 
 shop:
-  update-interval: 60          # сек (продакшн: 3600)
-  items-per-update: 3
+  # Таймер обновления ассортимента (секунды)
+  update-interval: 60   # продакшн: 3600
+
+  # Сколько товаров показывать при каждом обновлении
+  items-per-update: 12
+
+  # Список возможных товаров магазина (рандомно выбираются items-per-update штук)
   possible-items:
     - item: BREAD
       amount: 16
@@ -32,8 +39,20 @@ shop:
     - item: ARROW
       amount: 32
       price: 10
+    - item: COOKED_PORKCHOP
+      amount: 8
+      price: 20
+    - item: BOW
+      amount: 1
+      price: 35
+    - item: FISHING_ROD
+      amount: 1
+      price: 25
+    - item: BUNDLE
+      amount: 1
+      price: 40
 
-  # Только из этого белого списка выбирается валюта магазина (дорогие предметы исключены)
+  # Белый список валют магазина (только простые и дешёвые ресурсы)
   allowed-bid-items:
     - DIRT
     - COBBLESTONE
@@ -41,21 +60,21 @@ shop:
     - SAND
     - OAK_LOG
 
-  max-purchases-per-item: 10
-  global-max-purchases-per-item: 20
-  anti-spam-cooldown: 10
+  # Лимиты и анти-спам
+  max-purchases-per-item: 10           # на игрока за обновление ассортимента
+  global-max-purchases-per-item: 20    # общий лимит на товар
+  anti-spam-cooldown: 10               # сек
 
 auction:
-  duration: 300                # сек (продакшн: 18000 = 5 часов)
+  # Длительность аукциона (секунды)
+  duration: 300        # продакшн: 18000 (5 часов)
+
   anti-spam-cooldown: 10
   troll-chance: 30
-  fake-bid-item: DIRT          # валюта для сообщения при тролле
+  fake-bid-item: DIRT
   min-bid-base: 1
 
-  # Валюта ставок (фиксированная, не рандом)
-  bid-item: DIAMOND
-
-  # Список OP-лотов (всегда только из этого списка или сгенерированный алмазный шмот)
+  # Лоты всегда дорогие: из списка op-lots или сгенерированный алмазный шмот с чарами
   op-lots:
     - TOTEM_OF_UNDYING
     - ELYTRA
@@ -66,10 +85,33 @@ auction:
     - NETHERITE_CHESTPLATE
     - ENCHANTED_BOOK
 
-  # Генерировать ли рандомный зачарованный алмазный предмет как один из вариантов
+  # Генерировать ли случайный алмазный предмет с чарами как один из вариантов лота
   generate-diamond-gear: true
 
-  # Возвраты депозитов оффлайн-проигравшим сохранять до входа
+  # Ротация валют (off | daily | hourly)
+  bid-rotation: daily
+
+  # Пул редких/дорогих валют для аукциона (используется при rotation/рандоме)
+  bid-items:
+    - DIAMOND
+    - EMERALD
+    - NETHERITE_INGOT
+    - NETHERITE_SCRAP
+    - ANCIENT_DEBRIS
+    - ENCHANTED_GOLDEN_APPLE
+
+  # Режим выбора валюты, если bid-rotation: off (random | fixed)
+  bid-item-mode: random
+  fixed-bid-item: DIAMOND
+
+  # BossBar таймер аукциона
+  bossbar:
+    enabled: true
+    title: "Аукцион: %lot% | %biditem% | макс %max% | %left%"
+    color: GREEN           # базовый цвет; при убывании времени меняется на YELLOW/RED
+    style: SEGMENTED_10
+
+  # Возвраты депозитов проигравшим сохранять для оффлайна
   persist-returns-for-offline-losers: true
 
 messages:
@@ -86,7 +128,6 @@ messages:
   new-auction: "§aНовый аукцион! Лот: %lot%. Ставки в %biditem% (мин. %minbid%)."
   new-auction-troll: "§aНовый аукцион! Лот: Эпический Шалкер с сетом бога! Ставки в %fakebiditem% (мин. %minbid%)."
   bid-success: "§aСтавка принята! (Эффективно: %effective%)."
-  starting-bonus-applied: "§aБонус: +%bonus% к ставке!"
   bid-too-low: "§cСтавка мала! Минимум: %min%."
   auction-end: "§aАукцион завершён! Победитель: %winner% с %amount% %biditem%. Лот: %lot%."
   auction-end-troll: "§aТролль! Ставки возвращены."
