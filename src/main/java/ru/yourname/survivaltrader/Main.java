@@ -54,6 +54,7 @@ public class Main extends JavaPlugin {
         try {
             shopManager.saveData();
             auctionManager.saveData();
+            auctionManager.clearBossBar();
             data.save(dataFile);
         } catch (IOException e) {
             getLogger().severe("Failed to save data.yml: " + e.getMessage());
@@ -80,4 +81,5 @@ public class Main extends JavaPlugin {
     public AuctionManager getAuctionManager() {
         return auctionManager;
     }
+
 }
